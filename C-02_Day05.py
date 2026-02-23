@@ -1,81 +1,63 @@
-# Databricks notebook source
+# DAY 4 — Structured Streaming (Serverless-compatible)
+
 from pyspark.sql import functions as F
-from delta.tables import DeltaTable
 
-# STEP 1 — Load target Delta table (Day 4 clean table)
-target_table_name = "workspace.ecommerce.events_clean_day4"
+# Paths
+input_path = "/Volumes/workspace/ecommerce/ecommerce_data/stream_input"
+output_path = "/Volumes/workspace/ecommerce/ecommerce_data/stream_output"
+checkpoint_path = "/Volumes/workspace/ecommerce/ecommerce_data/checkpoints/stream_checkpoint"
 
-deltaTable = DeltaTable.forName(
-    spark,
-    target_table_name
-)
+# Load source table
+events = spark.table("workspace.ecommerce.events_clean_day4")
 
-print("Loaded target Delta table")
+# Simulate streaming input
+events.limit(500).write \
+    .format("csv") \
+    .mode("overwrite") \
+    .option("header", True) \
+    .save(input_path)
 
-
-# STEP 2 — Simulate incremental updates (using existing data sample)
-updates = spark.table(target_table_name) \
-    .orderBy(F.desc("event_time")) \
-    .limit(100)
-
-print("Incremental updates dataset created")
-updates.show(5)
+print("Streaming input folder ready")
 
 
-# STEP 3 — Perform incremental MERGE (UPSERT)
-deltaTable.alias("t").merge(
-    updates.alias("s"),
-    "t.user_session = s.user_session AND t.event_time = s.event_time"
-).whenMatchedUpdateAll() \
- .whenNotMatchedInsertAll() \
- .execute()
+# Read stream
+stream_df = spark.readStream \
+    .schema(events.schema) \
+    .csv(input_path)
 
-print("MERGE operation completed successfully")
+print("Streaming DataFrame created")
 
 
-# STEP 4 — View Delta table history (Time Travel metadata)
-print("Table history:")
-spark.sql(f"""
-DESCRIBE HISTORY {target_table_name}
-""").show(truncate=False)
+# Write stream using AvailableNow trigger (Serverless fix)
+query = stream_df.writeStream \
+    .format("delta") \
+    .outputMode("append") \
+    .option("checkpointLocation", checkpoint_path) \
+    .trigger(availableNow=True) \
+    .start(output_path)
+
+print("Streaming started")
 
 
-# STEP 5 — Read historical version using Time Travel
-print("Reading Version 0 of table:")
-version_0_df = spark.read.format("delta") \
-.option("versionAsOf", 0) \
-.table(target_table_name)
+# Wait for completion
+query.awaitTermination()
 
-version_0_df.show(5)
+print("Streaming completed")
 
 
-# STEP 6 — Optimize table with ZORDER (performance optimization)
-print("Optimizing table...")
-spark.sql(f"""
-OPTIMIZE {target_table_name}
-ZORDER BY (event_type, user_id)
-""")
+# Query results
+result = spark.read.format("delta").load(output_path)
 
-print("Optimization complete")
+print("Streaming output preview:")
+display(result)
 
 
-# STEP 7 — Vacuum old files (cleanup)
-print("Running VACUUM cleanup...")
-spark.sql(f"""
-VACUUM {target_table_name}
-RETAIN 168 HOURS
-""")
-
-print("VACUUM complete")
 
 
-# STEP 8 — Verify final table
-print("Final table preview:")
-spark.table(target_table_name).show(10)
 
-print("Day 5 tasks completed successfully")
 
-# COMMAND ----------
 
-# MAGIC %md
-# MAGIC On Day 5, I implemented incremental data processing and advanced Delta Lake management features using Databricks and Apache Spark. I performed an incremental MERGE (upsert) operation on a managed Delta table to simulate real-world streaming or batch updates, ensuring that existing records were updated and new records were inserted without duplication. This demonstrated how Delta Lake supports efficient incremental pipelines critical for scalable data engineering workflows. I also explored Delta Lake’s Time Travel capability by querying historical versions of the table, enabling data auditing, rollback, and version tracking. To improve performance, I applied OPTIMIZE with ZORDER to reorganize data files for faster query execution, and used VACUUM to safely remove obsolete files and reduce storage overhead. By completing these steps, I strengthened the pipeline’s efficiency, reliability, and maintainability, aligning with production-grade best practices for building scalable and optimized data platforms.
+
+
+
+On Day 4, I implemented a Structured Streaming pipeline using Databricks and Apache Spark to simulate real-time data ingestion and processing. I configured Spark to read streaming data from a folder source, enabling micro-batch processing to simulate continuous event ingestion. I integrated checkpointing to ensure fault tolerance and exactly-once processing semantics, allowing the system to recover reliably from failures without data loss or duplication. The streaming data was written directly into Delta Lake, creating a continuously updated Delta table optimized for scalable analytics. Finally, I queried the streaming output to validate that new records were successfully processed and stored. This implementation demonstrates how Delta Lake and Structured Streaming work together to support reliable, real-time data pipelines aligned with modern data engineering and production-grade streaming architectures.
