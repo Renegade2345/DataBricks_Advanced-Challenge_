@@ -1,23 +1,76 @@
-# DAY 4 — Structured Streaming (Serverless-compatible)
+# DAY 5 — Machine Learning Dataset Preparation
 
 from pyspark.sql import functions as F
 
-# Paths
-input_path = "/Volumes/workspace/ecommerce/ecommerce_data/stream_input"
-output_path = "/Volumes/workspace/ecommerce/ecommerce_data/stream_output"
-checkpoint_path = "/Volumes/workspace/ecommerce/ecommerce_data/checkpoints/stream_checkpoint"
-
-# Load source table
+# STEP 1 — Load events and features tables
 events = spark.table("workspace.ecommerce.events_clean_day4")
+features_df = spark.table("workspace.ecommerce.user_features_silver")
 
-# Simulate streaming input
-events.limit(500).write \
-    .format("csv") \
-    .mode("overwrite") \
-    .option("header", True) \
-    .save(input_path)
+print("Loaded events and features tables")
 
-print("Streaming input folder ready")
+
+# STEP 2 — Create binary purchase label per user
+label_df = events.groupBy("user_id").agg(
+    F.max(
+        F.when(F.col("event_type") == "purchase", 1).otherwise(0)
+    ).alias("purchased")
+)
+
+print("Label table created")
+display(label_df)
+
+
+# STEP 3 — Join features with labels
+training_data = features_df.join(
+    label_df,
+    on="user_id",
+    how="inner"
+)
+
+print("Training dataset created")
+display(training_data)
+
+
+# STEP 4 — Split into train and test datasets
+train_df, test_df = training_data.randomSplit(
+    [0.8, 0.2],
+    seed=42
+)
+
+print("Train/Test split completed")
+
+print("Train count:", train_df.count())
+print("Test count:", test_df.count())
+
+
+# STEP 5 — Validate label distribution
+print("Label distribution in full dataset:")
+training_data.groupBy("purchased").count().show()
+
+print("Label distribution in train dataset:")
+train_df.groupBy("purchased").count().show()
+
+print("Label distribution in test dataset:")
+test_df.groupBy("purchased").count().show()
+
+
+# STEP 6 — Save ML datasets as Delta tables
+train_df.write.format("delta") \
+.mode("overwrite") \
+.saveAsTable("workspace.ecommerce.ml_train_data")
+
+test_df.write.format("delta") \
+.mode("overwrite") \
+.saveAsTable("workspace.ecommerce.ml_test_data")
+
+print("ML datasets saved successfully")
+
+
+# STEP 7 — Verify saved tables
+display(spark.table("workspace.ecommerce.ml_train_data"))
+display(spark.table("workspace.ecommerce.ml_test_data"))
+
+print("Day 5 ML preparation completed successfully")
 
 
 # Read stream
@@ -60,4 +113,4 @@ display(result)
 
 
 
-On Day 4, I implemented a Structured Streaming pipeline using Databricks and Apache Spark to simulate real-time data ingestion and processing. I configured Spark to read streaming data from a folder source, enabling micro-batch processing to simulate continuous event ingestion. I integrated checkpointing to ensure fault tolerance and exactly-once processing semantics, allowing the system to recover reliably from failures without data loss or duplication. The streaming data was written directly into Delta Lake, creating a continuously updated Delta table optimized for scalable analytics. Finally, I queried the streaming output to validate that new records were successfully processed and stored. This implementation demonstrates how Delta Lake and Structured Streaming work together to support reliable, real-time data pipelines aligned with modern data engineering and production-grade streaming architectures.
+On Day 5, I prepared a machine learning–ready dataset by creating a binary purchase label to indicate whether a user had completed a purchase. I joined this label with the Silver layer user feature table to construct a complete feature-label dataset suitable for supervised learning. I then split the dataset into training and testing sets using a reproducible random split to ensure proper model evaluation. To validate data quality, I analyzed the label distribution across the full, training, and testing datasets to confirm balanced and consistent representation. Finally, I stored both training and testing datasets as managed Delta tables in Unity Catalog, ensuring scalable, reliable, and production-ready storage for downstream machine learning workflows
