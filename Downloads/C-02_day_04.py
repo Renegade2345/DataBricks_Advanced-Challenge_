@@ -1,44 +1,58 @@
-# Databricks notebook source
+# DAY 4 — Structured Streaming (Serverless-compatible)
+
 from pyspark.sql import functions as F
 
-events = spark.table("workspace.ecommerce.events_delta")
+# Paths
+input_path = "/Volumes/workspace/ecommerce/ecommerce_data/stream_input"
+output_path = "/Volumes/workspace/ecommerce/ecommerce_data/stream_output"
+checkpoint_path = "/Volumes/workspace/ecommerce/ecommerce_data/checkpoints/stream_checkpoint"
 
-# Convert to Delta managed table
-events.write.format("delta") \
-.mode("overwrite") \
-.saveAsTable("workspace.ecommerce.events_delta_day4")
+# Load source table
+events = spark.table("workspace.ecommerce.events_clean_day4")
 
-# SQL Delta table creation
-spark.sql("""
-CREATE TABLE workspace.ecommerce.events_delta_sql
-USING DELTA
-AS SELECT * FROM workspace.ecommerce.events_delta_day4
-""")
+# Simulate streaming input
+events.limit(500).write \
+    .format("csv") \
+    .mode("overwrite") \
+    .option("header", True) \
+    .save(input_path)
 
-# Schema enforcement test
-try:
-    wrong_schema = spark.createDataFrame(
-        [("a","b","c")],
-        ["wrong1","wrong2","wrong3"]
-    )
+print("Streaming input folder ready")
 
-    wrong_schema.write.format("delta") \
-    .mode("append") \
-    .saveAsTable("workspace.ecommerce.events_delta_day4")
 
-except Exception as e:
-    print("Schema enforcement working:", e)
+# Read stream
+stream_df = spark.readStream \
+    .schema(events.schema) \
+    .csv(input_path)
 
-# Remove duplicates
-deduplicated_events = events.dropDuplicates(
-    ["user_id", "product_id", "event_time"]
-)
+print("Streaming DataFrame created")
 
-deduplicated_events.write.format("delta") \
-.mode("overwrite") \
-.saveAsTable("workspace.ecommerce.events_clean_day4")
 
-# COMMAND ----------
+# Write stream using AvailableNow trigger (Serverless fix)
+query = stream_df.writeStream \
+    .format("delta") \
+    .outputMode("append") \
+    .option("checkpointLocation", checkpoint_path) \
+    .trigger(availableNow=True) \
+    .start(output_path)
 
-# MAGIC %md
-# MAGIC On Day 4, I worked on strengthening data reliability and integrity by implementing Delta Lake schema enforcement and duplicate handling using Databricks and Apache Spark. I converted the dataset into managed Delta tables using both PySpark and SQL approaches within Unity Catalog, ensuring ACID compliance and governed storage. I then tested Delta Lake’s schema enforcement by attempting to insert data with an incompatible schema, which was correctly rejected, demonstrating Delta’s ability to protect data consistency. Additionally, I handled potential duplicate records by applying deduplication logic based on business-critical keys such as user_id, product_id, and event_time, and stored the cleaned dataset as a new managed Delta table. This process ensured that the data pipeline remains reliable, consistent, and production-ready, aligning with industry best practices for building robust and scalable data engineering workflows.
+print("Streaming started")
+
+
+# Wait for completion
+query.awaitTermination()
+
+print("Streaming completed")
+
+
+# Query results
+result = spark.read.format("delta").load(output_path)
+
+print("Streaming output preview:")
+display(result)
+
+
+
+Day 4 Task Summary Paragraph — Structured Streaming and Delta Integration
+
+On Day 4, I implemented a Structured Streaming pipeline using Databricks and Apache Spark to simulate real-time data ingestion and processing. I configured Spark to read streaming data from a folder source, enabling micro-batch processing to simulate continuous event ingestion. I integrated checkpointing to ensure fault tolerance and exactly-once processing semantics, allowing the system to recover reliably from failures without data loss or duplication. The streaming data was written directly into Delta Lake, creating a continuously updated Delta table optimized for scalable analytics. Finally, I queried the streaming output to validate that new records were successfully processed and stored. This implementation demonstrates how Delta Lake and Structured Streaming work together to support reliable, real-time data pipelines aligned with modern data engineering and production-grade streaming architectures
